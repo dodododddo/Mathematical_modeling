@@ -1,3 +1,5 @@
+# @Author   : Chen
+
 import numpy as np
 import pandas as pd
 import sys
@@ -15,6 +17,7 @@ data.drop('year',axis=1,inplace=True)
 data_series = np.asarray(data).reshape((1,-1))[0]
 time = np.arange(len(data_series))
 data_log = np.log(data_series)
+plt.plot(np.arange(0, 100), data_log, label=u'log')
 
 start_args = [0.5, 1]
 arg = leastsq(residuals, start_args, args=(time, data_log))[0]
@@ -26,7 +29,7 @@ with open('model.out','a+') as f:
     sys.stdout = f
     print('######################################################################################################')
     print('序列主成分预测情况:')
-    print(f'square_loss = {np.sum(data_res ** 2):.4f}')
+    print(f'mse = {np.sum(data_res ** 2):.4f}')
     print(f'avg_loss_rate = {100 * np.sqrt(np.mean(data_res ** 2)) / np.mean(data_series):.2f}%\n')
     
     print('arima模型选阶及其AIC:')
