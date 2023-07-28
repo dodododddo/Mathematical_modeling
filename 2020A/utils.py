@@ -2,6 +2,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
+import time
 
 def get_true_temp(path: str = 'data.xlsx'):
     data = pd.read_excel(path).to_numpy()
@@ -47,6 +48,27 @@ def get_trans_matrix(r: float, size: int):
     mat3 = np.eye(size, k=-1) * -r
     return mat1 + mat2 + mat3
     
+class Timer():
+    def __init__(self):
+        self.times = []
+        self.start()
+
+    def start(self):
+        self.tik = time.time()
+    
+    def stop(self):
+        self.times.append(time.time() - self.tik)
+        return self.times[-1]
+    
+    def avg(self):
+        return sum(self.times) / len(self.times)
+    
+    def sum(self):
+        return sum(self.times)
+    
+    def cumsum(self):
+        return np.array(self.times).cumsum().tolist
+
 
 if __name__ == "__main__":
 
