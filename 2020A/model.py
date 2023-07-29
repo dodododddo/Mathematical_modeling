@@ -1,6 +1,7 @@
 from utils import * 
 from scipy import linalg
 from math import floor, ceil, cos
+from copy import deepcopy
 
 pos_anchors = [0, 25, 197.5, 339.5, 410.5, 435.5]
 
@@ -26,7 +27,7 @@ class Model():
 
     def solve(self):
         '''计算所有时间的T值'''
-        self.rs = [(alpha ** 2) * self.dt / (self.dx ** 2) for alpha in alphas]
+        rs = [(alpha ** 2) * self.dt / (self.dx ** 2) for alpha in self.alphas]
         u = np.zeros((self.Nx, self.Nt))
         u[:, 0] = 25
         res = np.ones(self.Nt) * 25
@@ -37,9 +38,9 @@ class Model():
 
         for i in range(len(self.step_anchors) - 1):
             for j in range(self.step_anchors[i] - 1, self.step_anchors[i + 1] - 1):
-                A = get_trans_matrix(self.rs[i], size=self.Nx)
+                A = get_trans_matrix(rs[i], size=self.Nx)
                 d = np.zeros(self.Nx)
-                d[0] = self.rs[i] * u0[j + 1]
+                d[0] = rs[i] * u0[j + 1]
                 d[-1] = d[0]
                 u[:, j + 1] = linalg.solve(A, d + u[:, j])
                 res[j + 1] = u[test_pos, j + 1]
@@ -52,30 +53,47 @@ class Model():
         true_data = get_true_temp()[:, 1]
         pred = self.solve()
         for i in range(len(self.step_anchors) - 1):
-            for j in range(self.step_anchors[i] + 38, self.step_anchors[i + 1]):
-                if (pred[j] - true_data[j - 38]).sum() >= 0:
-                    if(true_data[j - 38] < am_temps[j]):
-                        self.alphas[i] -= lr
-                    else:
-                        self.alphas[i] += lr
-                if (pred[j] - true_data[j - 38]).sum() < 0:
-                    if(true_data[j - 38] > am_temps[j]):
-                        self.alphas[i] -= lr
-                    else:
-                        self.alphas[i] += lr
+    
+            if (pred[self.step_anchors[i] + 38: self.step_anchors[i + 1]] - true_data[self.step_anchors[i]: self.step_anchors[i + 1] - 38]).sum() >= 0:
+                if(true_data[self.step_anchors[i]] < am_temps[self.step_anchors[i] + 38]):
+                    self.alphas[i] -= lr
+                else:
+                    self.alphas[i] += lr
+            if (pred[self.step_anchors[i] + 38: self.step_anchors[i + 1]] - true_data[self.step_anchors[i]: self.step_anchors[i + 1] - 38]).sum() < 0:
+                if(true_data[self.step_anchors[i]] > am_temps[self.step_anchors[i] + 38]):
+                    self.alphas[i] -= lr
+                else:
+                    self.alphas[i] += lr
 
-        
+    def optimize(self, lr):
+        pass
+
     
             
 class Optimizer():
-    def __init__():
-        pass
+    def __init__(self, model:Model, lr):
+        self.lr = lr
+        self.model = model
+        self.true_data = get_true_temp()[:,1]
 
-    def __impl(self, model:Model, *args):
-        raise NotImplementedError()
-    
-    def optimize(self, model:Model, *args):
-        self.__impl()
+    def optimize(self, num_epoches: int):
+        for epoch in range(num_epoches):
+            lr = self.lr * cos(3.1415926 / 3 * epoch / num_epoches)
+            pred = self.model.solve()[38:]
+            l = loss(self.true_data, pred)
+            delta = [self.calculate_grad(l, i) * lr for i in range(5)]
+            self.model.alphas = [self.model.alphas[i] - delta[i] for i in range(5)]
+            print(f'epoch{epoch + 1} done')
+        
+    def calculate_grad(self, loss_origin, idx):
+        model = deepcopy(self.model)
+        step = 1e-7
+        model.alphas[idx] += step
+        pred_new = model.solve()[38:]
+        # print(f'原模型: alpha[i]={self.model.alphas[idx]}, 计算模型: alpha[i] = {model.alphas[idx]}')
+        loss_new = loss(self.true_data, pred_new)
+        grad = (loss_new - loss_origin) / step
+        return grad
 
 
 class LeastsqOptimizer(Optimizer):
@@ -91,20 +109,15 @@ def loss(y, y_hat):
    
 if __name__ == '__main__':
 
-    alphas=[0.0006613060175224845, 0.0006806842472728309, 0.0007865454578240704, 0.0005173828190274838, 0.0004598235444981665] 
+    alphas = [0.0006293750934271579, 0.0006827143001546297, 0.0007873334421703878, 0.0005134110423806804, 0.0004619238287142745] 
     temps = [175, 195, 235, 255, 25]
     v = 70 / 60
 
     model = Model(v, temps, alphas)
-    lr = 5e-7
-    num_epoches = 100
-    for i in range(num_epoches):
-        lr *= 0.8
-        model.optimize_each_epoch(lr)
-        if i % 10 == 0:
-            print(model.alphas, lr)
-        
-
+    lr = 1e-13
+    num_epoches = 15
+    optimizer = Optimizer(model, lr)
+    optimizer.optimize(num_epoches)
 
     predicts = model.solve()
 
@@ -115,7 +128,8 @@ if __name__ == '__main__':
     true_data = get_true_temp()
     true_data[:,0] = true_data[:, 0] * model.v + 25
     
-    print(loss(true_data[:, 1], predicts[38:]))
+    print(f'loss = {loss(true_data[:, 1], predicts[38:])}')
+    print(f'alphas = {model.alphas}')
     plt.xlabel('time/s')
     plt.ylabel('T/℃')
     plt.plot(positions, am_temps, label=u'ambient_temperature')
