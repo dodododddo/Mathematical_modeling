@@ -2,11 +2,13 @@ from utils import *
 from scipy import linalg
 from math import floor, ceil, cos
 from copy import deepcopy
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing
 
 pos_anchors = [0, 25, 197.5, 339.5, 410.5, 435.5]
 
 class Model():
-    def __init__(self, v: float, temps: list, alphas: list, dx: float = 0.0001, dt: float = 0.5, l = 0.015):
+    def __init__(self, alphas: list, v: float = 70 / 60, temps: list = [175, 195, 235, 255, 25], dx: float = 0.0001, dt: float = 0.5, l = 0.015):
         # v单位为cm/s
         self.v = v
         self.pos2am_temp = pos2temp(temps)
@@ -18,7 +20,7 @@ class Model():
         # 时间总步数
         self.Nt = floor(self.T / dt) + 1
         self.Nx = floor(l / dx) + 1
-        self.alphas = alphas
+        self.alphas = np.array(alphas)
         # self.rs = [(alpha ** 2) * dt / (dx ** 2) for alpha in alphas]
         self.dx = dx
         self.dt = dt
@@ -27,7 +29,7 @@ class Model():
 
     def solve(self):
         '''计算所有时间的T值'''
-        rs = [(alpha ** 2) * self.dt / (self.dx ** 2) for alpha in self.alphas]
+        rs = self.alphas ** 2 * self.dt / (self.dx ** 2)
         u = np.zeros((self.Nx, self.Nt))
         u[:, 0] = 25
         res = np.ones(self.Nt) * 25
@@ -38,35 +40,28 @@ class Model():
 
         for i in range(len(self.step_anchors) - 1):
             for j in range(self.step_anchors[i] - 1, self.step_anchors[i + 1] - 1):
+                # A = get_trans_matrix(rs[i], size=self.Nx)
+                # d = np.zeros(self.Nx)
+                # d[0] = rs[i] * u0[j + 1]
+                # d[-1] = d[0]
+                # u[:, j + 1] = linalg.solve(A, d + u[:, j])
+                # res[j + 1] = u[test_pos, j + 1]
                 A = get_trans_matrix(rs[i], size=self.Nx)
+                B = np.linalg.inv(A)
                 d = np.zeros(self.Nx)
                 d[0] = rs[i] * u0[j + 1]
                 d[-1] = d[0]
-                u[:, j + 1] = linalg.solve(A, d + u[:, j])
+                u[:, j + 1] = B @ (d + u[:, j]) # A = get_trans_matrix(rs[i], size=self.Nx)
+                # d = np.zeros(self.Nx)
+                # d[0] = rs[i] * u0[j + 1]
+                # d[-1] = d[0]
+                # u[:, j + 1] = linalg.solve(A, d + u[:, j])
+                # res[j + 1] = u[test_pos, j + 1]
                 res[j + 1] = u[test_pos, j + 1]
-
+                
         return res
     
-    def optimize_each_epoch(self, lr):
-        positions = np.arange(0, 435.5, model.v * model.dt)
-        am_temps = self.pos2am_temp(positions)
-        true_data = get_true_temp()[:, 1]
-        pred = self.solve()
-        for i in range(len(self.step_anchors) - 1):
-    
-            if (pred[self.step_anchors[i] + 38: self.step_anchors[i + 1]] - true_data[self.step_anchors[i]: self.step_anchors[i + 1] - 38]).sum() >= 0:
-                if(true_data[self.step_anchors[i]] < am_temps[self.step_anchors[i] + 38]):
-                    self.alphas[i] -= lr
-                else:
-                    self.alphas[i] += lr
-            if (pred[self.step_anchors[i] + 38: self.step_anchors[i + 1]] - true_data[self.step_anchors[i]: self.step_anchors[i + 1] - 38]).sum() < 0:
-                if(true_data[self.step_anchors[i]] > am_temps[self.step_anchors[i] + 38]):
-                    self.alphas[i] -= lr
-                else:
-                    self.alphas[i] += lr
-
-    def optimize(self, lr):
-        pass
+   
 
     
             
@@ -77,48 +72,62 @@ class Optimizer():
         self.true_data = get_true_temp()[:,1]
 
     def optimize(self, num_epoches: int):
+        delta = np.zeros(5)
+        beta = 0.85
         for epoch in range(num_epoches):
             lr = self.lr * cos(3.1415926 / 3 * epoch / num_epoches)
             pred = self.model.solve()[38:]
             l = loss(self.true_data, pred)
-            delta = [self.calculate_grad(l, i) * lr for i in range(5)]
-            self.model.alphas = [self.model.alphas[i] - delta[i] for i in range(5)]
-            print(f'epoch{epoch + 1} done')
+            grad = np.array([self.calculate_grad(l, i) for i in range(5)])
+            delta = beta * delta + grad
+            self.model.alphas = self.model.alphas - delta * lr
+            print(f'epoch{epoch + 1} done, loss = {l}')
         
     def calculate_grad(self, loss_origin, idx):
         model = deepcopy(self.model)
-        step = 1e-7
+        step = 1e-8
         model.alphas[idx] += step
         pred_new = model.solve()[38:]
-        # print(f'原模型: alpha[i]={self.model.alphas[idx]}, 计算模型: alpha[i] = {model.alphas[idx]}')
         loss_new = loss(self.true_data, pred_new)
         grad = (loss_new - loss_origin) / step
         return grad
 
-
-class LeastsqOptimizer(Optimizer):
-    def __init__():
-        super().__init__()
-
 def loss(y, y_hat):
     return ((y - y_hat) ** 2).sum()
 
+def gradient(objective_function, x, epsilon=1e-6):
+    grad = np.zeros_like(x)
+    for i in range(len(x)):
+        x_plus_epsilon = x.copy()
+        x_plus_epsilon[i] += epsilon
+        grad[i] = (objective_function(x_plus_epsilon) - objective_function(x)) / epsilon
+    return grad
 
+def gradient_descent(objective_function, initial_params, learning_rate=0.1, max_iterations=100):
+    params = initial_params.copy()
+
+    for iteration in range(max_iterations):
+        grad = gradient(objective_function, params)
+        params -= learning_rate * grad
+
+    return params
 
 
    
 if __name__ == '__main__':
 
-    alphas = [0.0006293750934271579, 0.0006827143001546297, 0.0007873334421703878, 0.0005134110423806804, 0.0004619238287142745] 
+    # alphas = [0.0006290311832696454, 0.0006830021188641674, 0.0007878191183705314, 0.0005137363273277995, 0.0004615875447831881]
+    alphas = [0.00062813, 0.00068316, 0.00078787, 0.00051375, 0.00046053]
     temps = [175, 195, 235, 255, 25]
     v = 70 / 60
-
-    model = Model(v, temps, alphas)
+ 
+    model = Model(alphas, v, temps)
     lr = 1e-13
-    num_epoches = 15
+    num_epoches = 25
     optimizer = Optimizer(model, lr)
     optimizer.optimize(num_epoches)
-
+    
+    
     predicts = model.solve()
 
     trans = pos2temp(temps)
